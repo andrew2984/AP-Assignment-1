@@ -26,6 +26,7 @@ class Site(Base):
     lon: Mapped[float] = mapped_column(nullable=False)
 
     machines: Mapped[List["Machine"]] = relationship(back_populates="site")
+    access_requests: Mapped[List["AccessRequest"]] = relationship(back_populates="site")
 
 
 class Machine(Base):
@@ -60,6 +61,12 @@ class User(Base, UserMixin):
         back_populates="approver", foreign_keys="BookingRequest.approver_id"
     )
     notifications: Mapped[List["Notification"]] = relationship(back_populates="user")
+    access_requests: Mapped[List["AccessRequest"]] = relationship(
+        back_populates="requester", foreign_keys="AccessRequest.requester_id"
+    )
+    resolved_access_requests: Mapped[List["AccessRequest"]] = relationship(
+        back_populates="resolver", foreign_keys="AccessRequest.resolved_by_id"
+    )
 
     def is_active(self) -> bool:
         return self.status == "active"
@@ -115,3 +122,50 @@ class AuditLog(Base):
     actor_email: Mapped[str] = mapped_column(String(255), nullable=False)
     action: Mapped[str] = mapped_column(String(100), nullable=False)
     detail: Mapped[str] = mapped_column(String(700), nullable=False)
+
+
+class AccessRequest(Base):
+    """A request by a user to be granted access to a site for a specific assignment."""
+
+    __tablename__ = "access_requests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    requester_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    site_id: Mapped[Optional[int]] = mapped_column(ForeignKey("sites.id"), nullable=True)
+    # Brief description of the assignment or project this access is needed for
+    assignment: Mapped[str] = mapped_column(String(300), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="pending"
+    )  # pending | approved | rejected | revoked
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    resolved_by_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True)
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    decision_note: Mapped[Optional[str]] = mapped_column(String(400), nullable=True)
+
+    requester: Mapped["User"] = relationship(
+        back_populates="access_requests", foreign_keys=[requester_id]
+    )
+    resolver: Mapped[Optional["User"]] = relationship(
+        back_populates="resolved_access_requests", foreign_keys=[resolved_by_id]
+    )
+    site: Mapped[Optional["Site"]] = relationship(back_populates="access_requests")
+    status_history: Mapped[List["AccessRequestStatusHistory"]] = relationship(
+        back_populates="access_request", cascade="all, delete-orphan", order_by="AccessRequestStatusHistory.changed_at"
+    )
+
+
+class AccessRequestStatusHistory(Base):
+    """Immutable audit trail of every status transition on an AccessRequest."""
+
+    __tablename__ = "access_request_status_history"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    access_request_id: Mapped[int] = mapped_column(ForeignKey("access_requests.id"), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    changed_by_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True)
+    changed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    note: Mapped[Optional[str]] = mapped_column(String(400), nullable=True)
+
+    access_request: Mapped["AccessRequest"] = relationship(back_populates="status_history")
+    changed_by: Mapped[Optional["User"]] = relationship(foreign_keys=[changed_by_id])
