@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Optional, List
 
 from flask_login import UserMixin
-from sqlalchemy import String, Integer, DateTime, ForeignKey, Boolean
+from sqlalchemy import String, Integer, Text, DateTime, ForeignKey, Boolean
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -66,6 +66,12 @@ class User(Base, UserMixin):
     )
     resolved_access_requests: Mapped[List["AccessRequest"]] = relationship(
         back_populates="resolver", foreign_keys="AccessRequest.resolved_by_id"
+    )
+    owned_assignments: Mapped[List["Assignment"]] = relationship(
+        back_populates="owner", foreign_keys="Assignment.owner_id"
+    )
+    assignment_approver_roles: Mapped[List["AssignmentApprover"]] = relationship(
+        back_populates="approver", foreign_keys="AssignmentApprover.approver_id"
     )
 
     def is_active(self) -> bool:
@@ -132,6 +138,7 @@ class AccessRequest(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     requester_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     site_id: Mapped[Optional[int]] = mapped_column(ForeignKey("sites.id"), nullable=True)
+    assignment_id: Mapped[Optional[int]] = mapped_column(ForeignKey("assignments.id"), nullable=True)
     # Brief description of the assignment or project this access is needed for
     assignment: Mapped[str] = mapped_column(String(300), nullable=False)
     status: Mapped[str] = mapped_column(
@@ -150,6 +157,9 @@ class AccessRequest(Base):
         back_populates="resolved_access_requests", foreign_keys=[resolved_by_id]
     )
     site: Mapped[Optional["Site"]] = relationship(back_populates="access_requests")
+    assignment_ref: Mapped[Optional["Assignment"]] = relationship(
+        back_populates="access_requests", foreign_keys=[assignment_id]
+    )
     status_history: Mapped[List["AccessRequestStatusHistory"]] = relationship(
         back_populates="access_request", cascade="all, delete-orphan", order_by="AccessRequestStatusHistory.changed_at"
     )
@@ -169,3 +179,43 @@ class AccessRequestStatusHistory(Base):
 
     access_request: Mapped["AccessRequest"] = relationship(back_populates="status_history")
     changed_by: Mapped[Optional["User"]] = relationship(foreign_keys=[changed_by_id])
+
+
+class Assignment(Base):
+    """A formal assignment or project that users are working on, requiring site access."""
+
+    __tablename__ = "assignments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    title: Mapped[str] = mapped_column(String(300), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="active"
+    )  # active | completed | cancelled
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    owner: Mapped["User"] = relationship(back_populates="owned_assignments", foreign_keys=[owner_id])
+    approvers: Mapped[List["AssignmentApprover"]] = relationship(
+        back_populates="assignment", cascade="all, delete-orphan"
+    )
+    access_requests: Mapped[List["AccessRequest"]] = relationship(
+        back_populates="assignment_ref", foreign_keys="AccessRequest.assignment_id"
+    )
+
+
+class AssignmentApprover(Base):
+    """Records which users are designated approvers for a given assignment."""
+
+    __tablename__ = "assignment_approvers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    assignment_id: Mapped[int] = mapped_column(ForeignKey("assignments.id"), nullable=False)
+    approver_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    assigned_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    assignment: Mapped["Assignment"] = relationship(back_populates="approvers")
+    approver: Mapped["User"] = relationship(
+        back_populates="assignment_approver_roles", foreign_keys=[approver_id]
+    )
