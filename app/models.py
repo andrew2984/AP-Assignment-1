@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Optional, List
 
 from flask_login import UserMixin
-from sqlalchemy import String, Integer, Text, DateTime, ForeignKey, Boolean
+from sqlalchemy import String, Integer, Text, DateTime, ForeignKey, Boolean, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -21,12 +21,56 @@ class Site(Base):
     __tablename__ = "sites"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
+    # Short unique code for the site, e.g. "MAN", "LON" (optional, for future use)
+    code: Mapped[Optional[str]] = mapped_column(String(30), nullable=True, unique=True)
     city: Mapped[str] = mapped_column(String(120), nullable=False)
+    country: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    address: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     lat: Mapped[float] = mapped_column(nullable=False)
     lon: Mapped[float] = mapped_column(nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     machines: Mapped[List["Machine"]] = relationship(back_populates="site")
     access_requests: Mapped[List["AccessRequest"]] = relationship(back_populates="site")
+    locations: Mapped[List["Location"]] = relationship(back_populates="site", cascade="all, delete-orphan")
+
+
+class Location(Base):
+    """A named area within a Site (e.g. building, floor, room).
+
+    Supports an arbitrary hierarchy through the self-referential ``parent_id``
+    foreign key, allowing structures such as::
+
+        Site → Building → Floor → Room
+
+    The ``metadata_json`` column stores an optional JSON string for any
+    additional key/value pairs needed by future extensions.
+    """
+
+    __tablename__ = "locations"
+    __table_args__ = (
+        UniqueConstraint("site_id", "code", name="uq_location_site_code"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    # Short code unique within the site, e.g. "B1-F2-R03"
+    code: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    site_id: Mapped[int] = mapped_column(ForeignKey("sites.id"), nullable=False)
+    # Optional parent for hierarchical nesting (e.g. floor inside a building)
+    parent_id: Mapped[Optional[int]] = mapped_column(ForeignKey("locations.id"), nullable=True)
+    floor: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Arbitrary JSON string for extensible metadata
+    metadata_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    site: Mapped["Site"] = relationship(back_populates="locations")
+    parent: Mapped[Optional["Location"]] = relationship(
+        back_populates="children", remote_side="Location.id"
+    )
+    children: Mapped[List["Location"]] = relationship(back_populates="parent")
 
 
 class Machine(Base):

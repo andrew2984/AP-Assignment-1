@@ -9,7 +9,7 @@ import random
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from app.db import Base
-from app.models import Site, Machine, User
+from app.models import Site, Machine, User, Location
 from app.security import hash_password
 
 def seed(db_url: str = "sqlite:///app.db"):
@@ -22,11 +22,11 @@ def seed(db_url: str = "sqlite:///app.db"):
     Session = sessionmaker(bind=engine, future=True)
 
     sites_data = [
-        ("Test Hub North", "Manchester", 53.4808, -2.2426),
-        ("Test Hub South", "London", 51.5072, -0.1276),
-        ("Test Hub Central", "Milton Keynes", 52.0406, -0.7594),
-        ("Test Hub West", "Bristol", 51.4545, -2.5879),
-        ("Test Hub Scotland", "Edinburgh", 55.9533, -3.1883),
+        ("Test Hub North",    "MAN", "Manchester",   "England", "1 Piccadilly Gardens, Manchester, M1 1RG",  53.4808,  -2.2426),
+        ("Test Hub South",    "LON", "London",       "England", "30 St Mary Axe, London, EC3A 8EP",           51.5072,  -0.1276),
+        ("Test Hub Central",  "MKY", "Milton Keynes","England", "600 Silbury Blvd, Milton Keynes, MK9 3AT",  52.0406,  -0.7594),
+        ("Test Hub West",     "BRS", "Bristol",      "England", "Temple Quay House, Bristol, BS1 6EG",        51.4545,  -2.5879),
+        ("Test Hub Scotland", "EDI", "Edinburgh",    "Scotland","1 Waverley Bridge, Edinburgh, EH1 1BQ",      55.9533,  -3.1883),
     ]
     categories = ["Payments", "Devices", "Networking", "Core Platform", "Data Pipelines"]
     types = ["lab", "virtual"]
@@ -36,11 +36,39 @@ def seed(db_url: str = "sqlite:///app.db"):
             return  # already seeded
 
         sites = []
-        for name, city, lat, lon in sites_data:
-            s = Site(name=name, city=city, lat=lat, lon=lon)
+        for name, code, city, country, address, lat, lon in sites_data:
+            s = Site(name=name, code=code, city=city, country=country, address=address, lat=lat, lon=lon)
             db.add(s)
             sites.append(s)
         db.flush()
+
+        # Seed two standard locations per site: a lab area and a virtual lab
+        for site in sites:
+            lab = Location(
+                name=f"{site.city} Lab",
+                code="LAB",
+                site_id=site.id,
+                floor="1",
+                description="Physical lab area with test machines.",
+            )
+            virtual = Location(
+                name=f"{site.city} Virtual Lab",
+                code="VLAB",
+                site_id=site.id,
+                description="Virtual machines hosted at this site.",
+            )
+            db.add(lab)
+            db.add(virtual)
+            db.flush()
+            # Example sub-location within the lab (hierarchy)
+            db.add(Location(
+                name=f"{site.city} Lab – Bay A",
+                code="LAB-A",
+                site_id=site.id,
+                parent_id=lab.id,
+                floor="1",
+                description="Bay A – first row of test benches.",
+            ))
 
         # 100 machines
         for i in range(1, 101):
