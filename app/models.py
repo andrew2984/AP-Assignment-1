@@ -337,7 +337,7 @@ class AccessRequest(Base):
     assignment: Mapped[str] = mapped_column(String(300), nullable=False)
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, default="pending"
-    )  # pending | approved | rejected | revoked
+    )  # pending | approved | rejected | revoked | expired
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     resolved_by_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True)
