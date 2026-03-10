@@ -59,4 +59,4 @@ def utilisation_last_days(db: Session, days: int = 30):
     "since": since,
     "by_machine": by_machine,
     "by_category": cat_rows,
-}
+    }
