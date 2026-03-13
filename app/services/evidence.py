@@ -232,13 +232,13 @@ def export_evidence_summary(
             "export_evidence_summary requires at least one of access_request_id or assignment_id."
         )
 
-    query = db.query(Evidence)
+    stmt = select(Evidence).order_by(Evidence.uploaded_at)
     if access_request_id is not None:
-        query = query.filter(Evidence.access_request_id == access_request_id)
+        stmt = stmt.where(Evidence.access_request_id == access_request_id)
     if assignment_id is not None:
-        query = query.filter(Evidence.assignment_id == assignment_id)
+        stmt = stmt.where(Evidence.assignment_id == assignment_id)
 
-    results = query.order_by(Evidence.uploaded_at).all()
+    results = db.execute(stmt).scalars().all()
 
     return [
         {

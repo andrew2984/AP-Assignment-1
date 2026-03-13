@@ -475,13 +475,13 @@ class Assignment(Base):
     access_requests: Mapped[List["AccessRequest"]] = relationship(
         back_populates="assignment_ref", foreign_keys="AccessRequest.assignment_id"
     )
-    # Use cascade="all" but avoid delete-orphan because Evidence may also be linked
-    # to an AccessRequest; orphan cleanup must be handled explicitly at the
-    # application/service layer.
+    # Evidence can also be linked to an AccessRequest, so we restrict the cascade
+    # to save-update and merge only — no delete propagation.  Orphan cleanup must
+    # be handled explicitly at the application/service layer.
     evidence: Mapped[List["Evidence"]] = relationship(
         back_populates="assignment_ref",
         foreign_keys="Evidence.assignment_id",
-        cascade="all",
+        cascade="save-update, merge",
     )
 
 
@@ -536,9 +536,11 @@ class Evidence(Base):
     - ``evidence_type`` is a constrained string rather than a FK to a lookup table;
       the enumeration is small and stable, so a separate table would add join cost
       with no normalisation benefit.
-    - cascade="all, delete-orphan" on the parent relationships means that deleting
-      an AccessRequest or Assignment also removes its attached evidence rows,
-      preventing orphan records from accumulating in the evidence table.
+    - The parent relationships on ``AccessRequest`` and ``Assignment`` use
+      ``cascade="save-update, merge"`` (no delete propagation) so that deleting
+      one parent does not silently destroy Evidence that is still linked to the
+      other parent.  Explicit orphan cleanup (both FKs NULL) must be handled at
+      the service layer when evidence should be removed.
 
     Valid values for ``evidence_type``:
         document | screenshot | certificate | log | photo | other
