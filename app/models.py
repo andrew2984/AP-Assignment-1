@@ -397,11 +397,13 @@ class AccessRequest(Base):
     status_history: Mapped[List["AccessRequestStatusHistory"]] = relationship(
         back_populates="access_request", cascade="all, delete-orphan", order_by="AccessRequestStatusHistory.changed_at"
     )
-    # cascade="all, delete-orphan" keeps evidence in sync with the request.
+    # Evidence can also be linked to an Assignment, so we avoid delete-orphan here
+    # to prevent deleting shared Evidence when an AccessRequest is removed.
+    # Orphan cleanup must be handled explicitly at the application/service layer.
     evidence: Mapped[List["Evidence"]] = relationship(
         back_populates="access_request_ref",
         foreign_keys="Evidence.access_request_id",
-        cascade="all, delete-orphan",
+        cascade="all",
     )
 
 
@@ -473,11 +475,13 @@ class Assignment(Base):
     access_requests: Mapped[List["AccessRequest"]] = relationship(
         back_populates="assignment_ref", foreign_keys="AccessRequest.assignment_id"
     )
-    # cascade="all, delete-orphan" keeps evidence in sync with the assignment.
+    # Use cascade="all" but avoid delete-orphan because Evidence may also be linked
+    # to an AccessRequest; orphan cleanup must be handled explicitly at the
+    # application/service layer.
     evidence: Mapped[List["Evidence"]] = relationship(
         back_populates="assignment_ref",
         foreign_keys="Evidence.assignment_id",
-        cascade="all, delete-orphan",
+        cascade="all",
     )
 
 

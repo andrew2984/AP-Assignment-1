@@ -268,42 +268,63 @@ def test_user_uploaded_evidence_backref(db, uploader, access_request):
 
 
 # ---------------------------------------------------------------------------
-# Cascade delete
+# Cascade behaviour (no delete-orphan)
 # ---------------------------------------------------------------------------
 
 
-def test_cascade_delete_access_request_removes_evidence(db, uploader, access_request):
+def test_removing_evidence_from_collection_does_not_delete_it(
+    db, uploader, access_request, assignment
+):
+    """With cascade="all" (no delete-orphan), removing an Evidence row from a
+    parent's collection does NOT delete the row from the database.  This is
+    the key safety property for cross-linked Evidence: clearing an
+    AccessRequest's evidence list should not destroy a record that is still
+    relevant to an Assignment."""
     ev = Evidence(
-        title="To be deleted",
-        file_path="/uploads/delete_me.pdf",
+        title="Cross-linked evidence",
+        file_path="/uploads/cross.pdf",
         uploaded_by_email=uploader.email,
         access_request_id=access_request.id,
-    )
-    db.add(ev)
-    db.commit()
-    ev_id = ev.id
-
-    db.delete(access_request)
-    db.commit()
-
-    assert db.get(Evidence, ev_id) is None
-
-
-def test_cascade_delete_assignment_removes_evidence(db, uploader, assignment):
-    ev = Evidence(
-        title="Assignment evidence",
-        file_path="/uploads/assign_ev.pdf",
-        uploaded_by_email=uploader.email,
         assignment_id=assignment.id,
     )
     db.add(ev)
     db.commit()
     ev_id = ev.id
 
-    db.delete(assignment)
+    # Remove from the AccessRequest's collection (simulates unlinking, not deletion)
+    db.refresh(access_request)
+    access_request.evidence.remove(ev)
     db.commit()
 
-    assert db.get(Evidence, ev_id) is None
+    # Evidence row must still exist because we only unlinked it, not deleted it
+    surviving = db.get(Evidence, ev_id)
+    assert surviving is not None
+    assert surviving.assignment_id == assignment.id
+
+
+def test_removing_evidence_from_assignment_collection_does_not_delete_it(
+    db, uploader, access_request, assignment
+):
+    """Symmetric: removing Evidence from Assignment.evidence collection does not
+    delete the row — it remains accessible via the AccessRequest link."""
+    ev = Evidence(
+        title="Cross-linked evidence",
+        file_path="/uploads/cross.pdf",
+        uploaded_by_email=uploader.email,
+        access_request_id=access_request.id,
+        assignment_id=assignment.id,
+    )
+    db.add(ev)
+    db.commit()
+    ev_id = ev.id
+
+    db.refresh(assignment)
+    assignment.evidence.remove(ev)
+    db.commit()
+
+    surviving = db.get(Evidence, ev_id)
+    assert surviving is not None
+    assert surviving.access_request_id == access_request.id
 
 
 # ---------------------------------------------------------------------------
