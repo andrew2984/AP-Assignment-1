@@ -403,7 +403,7 @@ class AccessRequest(Base):
     evidence: Mapped[List["Evidence"]] = relationship(
         back_populates="access_request_ref",
         foreign_keys="Evidence.access_request_id",
-        cascade="all",
+        cascade="save-update, merge",
     )
 
 
