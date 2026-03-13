@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from typing import Optional, List, Dict, Any
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Evidence, AuditLog
@@ -150,12 +151,12 @@ def get_evidence_for_request(
     Returns:
         A list of ``Evidence`` instances (may be empty).
     """
-    return (
-        db.query(Evidence)
-        .filter(Evidence.access_request_id == access_request_id)
+    stmt = (
+        select(Evidence)
+        .where(Evidence.access_request_id == access_request_id)
         .order_by(Evidence.uploaded_at)
-        .all()
     )
+    return db.execute(stmt).scalars().all()
 
 
 def get_evidence_for_assignment(
@@ -173,12 +174,12 @@ def get_evidence_for_assignment(
     Returns:
         A list of ``Evidence`` instances (may be empty).
     """
-    return (
-        db.query(Evidence)
-        .filter(Evidence.assignment_id == assignment_id)
+    stmt = (
+        select(Evidence)
+        .where(Evidence.assignment_id == assignment_id)
         .order_by(Evidence.uploaded_at)
-        .all()
     )
+    return db.execute(stmt).scalars().all()
 
 
 # ---------------------------------------------------------------------------
