@@ -1,9 +1,5 @@
 # -*- coding: utf-8 -*-
 """
-Created on Tue Jan 13 14:31:25 2026
-
-@author: NBoyd1
-
 Data model for the AP Assignment booking system.
 
 Relationship map (→ = FK / many-to-one, ↔ = bidirectional):
@@ -243,7 +239,7 @@ class BookingRequest(Base):
     decision_note: Mapped[Optional[str]] = mapped_column(String(400), nullable=True)
     decided_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
-    # created_at is used by SLA automation (Issue #30) to compute request age.
+    # created_at is used by SLA automation to compute request age.
     # NOTE: If upgrading an existing SQLite app.db, recreate the database or add
     # this column manually: ALTER TABLE booking_requests ADD COLUMN created_at DATETIME;
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)

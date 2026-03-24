@@ -1,9 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Tue Jan 13 14:17:27 2026
-
-@author: NBoyd1
-"""
+"""Booking request routes: create, view, cancel, and check-in."""
 
 from datetime import datetime
 from flask import Blueprint, render_template, redirect, url_for, flash, current_app
@@ -16,6 +12,82 @@ from ..services.booking_rules import validate_booking_window, machines_exist_and
 from ..services.notifications import queue_notification
 
 bp = Blueprint("bookings", __name__, url_prefix="/bookings")
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _build_machine_context(db) -> dict:
+    """Return machine data needed to render the new-booking form."""
+    machines = db.execute(
+        select(Machine)
+        .options(joinedload(Machine.site), joinedload(Machine.location))
+        .order_by(Machine.name)
+    ).scalars().all()
+
+    locations = {}
+    for m in machines:
+        if m.location_id and m.location:
+            locations[m.location_id] = m.location.name
+
+    return {
+        "machines": machines,
+        "machine_type_map": {m.id: m.machine_type for m in machines},
+        "machine_location_map": {m.id: m.location_id for m in machines},
+        "machine_status_map": {m.id: m.status for m in machines},
+        "locations": locations,
+    }
+
+
+def _render_booking_form(form, ctx: dict):
+    """Render the new-booking template with the given form and machine context."""
+    return render_template(
+        "new_booking.html",
+        form=form,
+        machine_type_map=ctx["machine_type_map"],
+        machine_location_map=ctx["machine_location_map"],
+        machine_status_map=ctx["machine_status_map"],
+        locations=ctx["locations"],
+    )
+
+
+def _create_access_request_for_booking(db, booking, selected_machines, actor_email: str) -> None:
+    """Create a linked AccessRequest for the booking when it includes lab machines.
+
+    One AccessRequest is linked per BookingRequest. For multi-site bookings all
+    site names are captured in the description; site_id is set to the first lab site.
+    """
+    lab_machines = [m for m in selected_machines if m.machine_type == "lab"]
+    if not lab_machines:
+        return
+
+    site_ids = list(dict.fromkeys(m.site_id for m in lab_machines))
+    site_city_names = ", ".join(dict.fromkeys(m.site.city for m in lab_machines))
+    machine_ids = [m.id for m in selected_machines]
+
+    ar = AccessRequest(
+        requester_id=booking.requester_id,
+        site_id=site_ids[0],
+        booking_request_id=booking.id,
+        assignment=f"Booking #{booking.id} – site access for {site_city_names}",
+        status="pending",
+    )
+    db.add(ar)
+    db.flush()
+    db.add(AuditLog(
+        actor_email=actor_email,
+        action="access_request_created_from_booking",
+        detail=(
+            f"booking_id={booking.id}, access_request_id={ar.id}, "
+            f"machine_ids={machine_ids}, site_ids={site_ids}"
+        ),
+    ))
+
+
+# ---------------------------------------------------------------------------
+# Routes
+# ---------------------------------------------------------------------------
 
 @bp.get("/my")
 @login_required
@@ -38,37 +110,23 @@ def my_bookings():
 def new_booking():
     form = BookingForm()
     with current_app.session_factory() as db:
-        machines = db.execute(
-            select(Machine)
-            .options(joinedload(Machine.site), joinedload(Machine.location))
-            .order_by(Machine.name)
-        ).scalars().all()
-        form.machines.choices = [(m.id, f"{m.name} • {m.machine_type.upper()} • {m.site.city}") for m in machines]
-        # Mappings exposed to the template for JS-driven filtering and checkbox visibility
-        machine_type_map = {m.id: m.machine_type for m in machines}
-        machine_location_map = {m.id: m.location_id for m in machines}
-        machine_status_map = {m.id: m.status for m in machines}
-        # Unique locations for the filter dropdown (location_id → location name)
-        locations = {}
-        for m in machines:
-            if m.location_id and m.location:
-                locations[m.location_id] = m.location.name
+        ctx = _build_machine_context(db)
+        form.machines.choices = [
+            (m.id, f"{m.name} • {m.machine_type.upper()} • {m.site.city}")
+            for m in ctx["machines"]
+        ]
 
         if form.validate_on_submit():
             ok, msg = validate_booking_window(form.start_at.data, form.end_at.data)
             if not ok:
                 flash(msg, "warning")
-                return render_template("new_booking.html", form=form, machine_type_map=machine_type_map,
-                                       machine_location_map=machine_location_map, machine_status_map=machine_status_map,
-                                       locations=locations)
+                return _render_booking_form(form, ctx)
 
             ids = list(dict.fromkeys(form.machines.data))
             ok2, msg2 = machines_exist_and_available(db, ids)
             if not ok2:
                 flash(msg2, "warning")
-                return render_template("new_booking.html", form=form, machine_type_map=machine_type_map,
-                                       machine_location_map=machine_location_map, machine_status_map=machine_status_map,
-                                       locations=locations)
+                return _render_booking_form(form, ctx)
 
             # Re-fetch selected machines to determine lab/site membership (anti-spoofing)
             selected_machines = db.execute(select(Machine).where(Machine.id.in_(ids))).scalars().all()
@@ -87,47 +145,26 @@ def new_booking():
             for mid in ids:
                 db.add(BookingItem(booking_id=booking.id, machine_id=mid))
 
-            # Create AccessRequest only when selection contains lab machines
-            # and the user explicitly requested site access (anti-spoofing enforced server-side).
-            # Issue #46: 1:1 link – one AccessRequest per BookingRequest. For multi-site bookings
-            # all site names are captured in the description; site_id is set to the first lab site.
             if form.request_access.data and contains_lab:
-                lab_machines = [m for m in selected_machines if m.machine_type == "lab"]
-                site_ids = list(dict.fromkeys(m.site_id for m in lab_machines))
-                site_city_names = ", ".join(
-                    dict.fromkeys(m.site.city for m in lab_machines)
-                )
-                ar = AccessRequest(
-                    requester_id=current_user.id,
-                    site_id=site_ids[0],
-                    booking_request_id=booking.id,
-                    assignment=f"Booking #{booking.id} – site access for {site_city_names}",
-                    status="pending",
-                )
-                db.add(ar)
-                db.flush()
-                db.add(AuditLog(
-                    actor_email=current_user.email,
-                    action="access_request_created_from_booking",
-                    detail=(
-                        f"booking_id={booking.id}, access_request_id={ar.id}, "
-                        f"machine_ids={ids}, contains_lab={contains_lab}, site_ids={site_ids}"
-                    ),
-                ))
+                _create_access_request_for_booking(db, booking, selected_machines, current_user.email)
 
-            approvers = db.execute(select(User).where(User.role.in_(["approver", "admin"]), User.status == "active")).scalars().all()
+            approvers = db.execute(
+                select(User).where(User.role.in_(["approver", "admin"]), User.status == "active")
+            ).scalars().all()
             for a in approvers:
                 queue_notification(db, a.id, f"New booking request #{booking.id} awaiting approval.")
 
-            db.add(AuditLog(actor_email=current_user.email, action="booking_request", detail=f"Created booking request #{booking.id}"))
+            db.add(AuditLog(
+                actor_email=current_user.email,
+                action="booking_request",
+                detail=f"Created booking request #{booking.id}",
+            ))
             db.commit()
 
             flash("Booking request submitted for approval.", "success")
             return redirect(url_for("bookings.my_bookings"))
 
-    return render_template("new_booking.html", form=form, machine_type_map=machine_type_map,
-                           machine_location_map=machine_location_map, machine_status_map=machine_status_map,
-                           locations=locations)
+    return _render_booking_form(form, ctx)
 
 @bp.post("/cancel/<int:booking_id>")
 @login_required

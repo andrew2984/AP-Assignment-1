@@ -1,9 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Tue Jan 13 14:15:54 2026
-
-@author: NBoyd1
-"""
+"""Notification queue: create and dispatch in-app notifications."""
 
 from datetime import datetime
 from sqlalchemy import select

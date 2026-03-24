@@ -1,9 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Tue Jan 13 14:13:28 2026
-
-@author: NBoyd1
-"""
+"""Security helpers: password hashing and role-based access control."""
 
 from werkzeug.security import generate_password_hash, check_password_hash
 

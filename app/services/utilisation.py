@@ -1,9 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Tue Jan 13 14:15:27 2026
-
-@author: NBoyd1
-"""
+"""Utilisation analytics: compute machine and category usage over a time window."""
 
 from datetime import datetime, timedelta
 from sqlalchemy import select, func, Float, text, cast

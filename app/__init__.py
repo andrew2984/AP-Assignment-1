@@ -1,9 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Tue Jan 13 14:09:11 2026
-
-@author: NBoyd1
-"""
+"""Application factory for the Test Machine Booking Tool."""
 
 from flask import Flask
 from flask_login import LoginManager
@@ -47,7 +43,6 @@ def create_app():
     load_dotenv()
     app = Flask(__name__, template_folder="templates", static_folder="static")
     app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "dev-secret-key-change-me")
-    app.config["SHOW_CLOUD_BETA_LABEL"] = os.getenv("RENDER", "").lower() == "true"
     db_url = (
         os.getenv("DATABASE_URL")
         or os.getenv("CONNECTION_STRING")

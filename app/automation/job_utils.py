@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Shared helpers for background job execution (Issue #26).
+Shared helpers for background job execution.
 
 Concurrency strategy
 --------------------

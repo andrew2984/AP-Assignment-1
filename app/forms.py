@@ -1,9 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Tue Jan 13 14:13:55 2026
-
-@author: NBoyd1
-"""
+"""WTForms form definitions for registration, login, and booking."""
 
 from datetime import timedelta
 
