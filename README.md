@@ -70,15 +70,15 @@ The Test Machine Booking Tool is a Flask-based web application designed to manag
    On first run, the application will automatically:
    - Create the database
    - Set up tables
-   - Seed initial data (5 test sites, 100 test machines, 3 demo users)
+   - Seed initial data (5 test sites, 100 test machines, 3 default users)
 
 5. **Access the application**
    
    Open your browser and navigate to: `http://127.0.0.1:5000`
 
-### Demo Accounts
+### Default Accounts
 
-The application comes pre-seeded with the following demo accounts:
+The application is pre-seeded with the following accounts:
 
 | Role | Email | Password |
 |------|-------|----------|

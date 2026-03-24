@@ -1,9 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Tue Jan 13 14:17:04 2026
-
-@author: NBoyd1
-"""
+"""Authentication and registration routes."""
 
 from flask import Blueprint, render_template, redirect, url_for, flash, current_app
 from flask_login import login_user, logout_user, login_required, current_user

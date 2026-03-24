@@ -1,9 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Tue Jan 13 14:14:21 2026
-
-@author: NBoyd1
-"""
+"""Booking validation rules: time window checks and machine availability."""
 
 from datetime import datetime, timedelta
 from sqlalchemy import select

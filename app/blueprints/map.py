@@ -1,9 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Tue Jan 13 14:19:20 2026
-
-@author: NBoyd1
-"""
+"""Map blueprint: multi-site machine location view."""
 
 from flask import Blueprint, render_template, current_app
 from flask_login import login_required

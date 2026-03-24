@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Automation Action Handler (Issue #22).
+Automation action handler.
 
 Applies structured actions returned by the rule engine to the database using
 a caller-supplied SQLAlchemy session.  No Flask app context is required and

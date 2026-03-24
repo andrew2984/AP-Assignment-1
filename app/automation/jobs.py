@@ -1,21 +1,18 @@
 # -*- coding: utf-8 -*-
 """
-Scheduled background jobs: Overdue & SLA Monitoring (Issue #24),
-Access Window Monitoring (Issue #25).
+Scheduled background jobs: SLA monitoring and booking window monitoring.
 
-Issue #24: Queries pending AccessRequest rows, evaluates SLA rules via the
-rule engine, and applies any resulting actions through the action handler.
+SLA monitoring queries pending AccessRequest and BookingRequest rows, evaluates
+SLA rules via the rule engine, and applies any resulting actions through the
+action handler.
 
-Issue #25: Monitors booking windows for approved BookingRequests, detecting
-starting-soon, active, and missed states, and records audit events.
+Access window monitoring tracks approved BookingRequests, detecting
+starting-soon, active, and missed check-in states, and records audit events.
 
-Concurrency safety (Issue #26)
--------------------------------
 Both jobs use ``job_session`` from ``job_utils`` to obtain a single
 short-lived session per execution.  AuditLog-based idempotency guards
 prevent duplicate writes if the same job fires more than once for the same
-entity (e.g. due to a process restart or overlapping test runs).  See
-``app/automation/job_utils.py`` for the full concurrency strategy.
+entity.  See ``app/automation/job_utils.py`` for the full concurrency strategy.
 
 No Flask app context required.
 """
@@ -49,7 +46,7 @@ def run_sla_monitoring(
 
     Processes both entity types within a single session:
     - Pending ``AccessRequest`` rows (existing behaviour)
-    - Pending ``BookingRequest`` rows (Issue #30)
+    - Pending ``BookingRequest`` rows
 
     Parameters
     ----------
@@ -93,7 +90,7 @@ def run_sla_monitoring(
             _SYSTEM_ACTOR, len(ar_requests), ar_actions_applied,
         )
 
-        # --- BookingRequest (Issue #30) ---
+        # --- BookingRequest ---
         br_requests = db.execute(
             select(BookingRequest).where(BookingRequest.status == "pending")
         ).scalars().all()
@@ -139,7 +136,7 @@ def run_access_window_monitoring(
       → user notification
     - **Grace period**: ``start_at <= now <= start_at + 5 minutes``
       → no action; user still has time to check in.
-    - **No-show** (Issue #31): ``now > start_at + 5 minutes`` and not
+    - **No-show**: ``now > start_at + 5 minutes`` and not
       checked-in and not already marked no-show → sets ``no_show = True``,
       → audit action ``automation:NO_SHOW_MARKED``
       → user notification
@@ -205,7 +202,7 @@ def run_access_window_monitoring(
                 )
 
             elif now > no_show_threshold:
-                # Grace period has elapsed since start_at (Issue #31)
+                # Grace period has elapsed; mark as no-show if user did not check in.
                 if not booking.checked_in and not booking.no_show:
                     booking.no_show = True
                     _ensure_booking_audit(

@@ -1,9 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Tue Jan 13 14:18:54 2026
-
-@author: NBoyd1
-"""
+"""Admin and approver routes: dashboard, user management, booking decisions, exports."""
 
 import csv
 import io
@@ -21,11 +17,101 @@ from ..security import require_role
 
 bp = Blueprint("admin", __name__, url_prefix="/admin")
 
+
 def _require(allowed):
     if not require_role(current_user.role, allowed):
         flash("You do not have access to that page.", "danger")
         return False
     return True
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _fetch_sla_stats(db, now: datetime) -> dict:
+    """Return SLA and status counts for BookingRequest and AccessRequest."""
+    warn_threshold = now - timedelta(hours=8)
+    breach_threshold = now - timedelta(hours=48)
+
+    return {
+        "br_pending": db.execute(
+            select(func.count()).select_from(BookingRequest)
+            .where(BookingRequest.status == "pending")
+        ).scalar_one(),
+        "br_sla_warning": db.execute(
+            select(func.count()).select_from(BookingRequest)
+            .where(
+                BookingRequest.status == "pending",
+                BookingRequest.created_at <= warn_threshold,
+                BookingRequest.created_at > breach_threshold,
+            )
+        ).scalar_one(),
+        "br_sla_breach": db.execute(
+            select(func.count()).select_from(BookingRequest)
+            .where(
+                BookingRequest.status == "pending",
+                BookingRequest.created_at <= breach_threshold,
+            )
+        ).scalar_one(),
+        "br_expired": db.execute(
+            select(func.count()).select_from(BookingRequest)
+            .where(BookingRequest.status == "expired")
+        ).scalar_one(),
+        "ar_pending": db.execute(
+            select(func.count()).select_from(AccessRequest)
+            .where(AccessRequest.status == "pending")
+        ).scalar_one(),
+        "ar_sla_warning": db.execute(
+            select(func.count()).select_from(AccessRequest)
+            .where(
+                AccessRequest.status == "pending",
+                AccessRequest.created_at <= warn_threshold,
+                AccessRequest.created_at > breach_threshold,
+            )
+        ).scalar_one(),
+        "ar_sla_breach": db.execute(
+            select(func.count()).select_from(AccessRequest)
+            .where(
+                AccessRequest.status == "pending",
+                AccessRequest.created_at <= breach_threshold,
+            )
+        ).scalar_one(),
+        "ar_expired": db.execute(
+            select(func.count()).select_from(AccessRequest)
+            .where(AccessRequest.status == "expired")
+        ).scalar_one(),
+    }
+
+
+def _cascade_reject_access_request(db, booking: BookingRequest, actor_email: str) -> None:
+    """Auto-reject any pending AccessRequest linked to a rejected booking."""
+    ar = db.execute(
+        select(AccessRequest)
+        .where(AccessRequest.booking_request_id == booking.id, AccessRequest.status == "pending")
+    ).scalar_one_or_none()
+    if ar is None:
+        return
+
+    ar.status = "rejected"
+    ar.resolved_by_id = current_user.id
+    ar.resolved_at = datetime.utcnow()
+    ar.updated_at = datetime.utcnow()
+    ar.decision_note = f"Auto-rejected: linked booking #{booking.id} was rejected."
+    db.add(AuditLog(
+        actor_email=actor_email,
+        action="access_request_auto_rejected_due_to_booking_rejection",
+        detail=f"access_request_id={ar.id}, booking_id={booking.id}",
+    ))
+    queue_notification(
+        db, ar.requester_id,
+        f"Access request #{ar.id} auto-rejected because booking #{booking.id} was rejected.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Routes
+# ---------------------------------------------------------------------------
 
 @bp.get("/dashboard")
 @login_required
@@ -33,89 +119,33 @@ def dashboard():
     if not _require({"approver", "admin"}):
         return redirect(url_for("bookings.my_bookings"))
 
+    now = datetime.utcnow()
     status = request.args.get("status", "pending")
     with current_app.session_factory() as db:
         util = utilisation_last_days(db, days=30)
 
         upcoming = db.execute(
             select(BookingRequest)
-            .where(BookingRequest.start_at >= datetime.utcnow() - timedelta(days=1))
+            .where(BookingRequest.start_at >= now - timedelta(days=1))
             .order_by(BookingRequest.start_at.asc())
             .limit(50)
         ).scalars().all()
 
         cancellations_30 = db.execute(
             select(func.count()).select_from(BookingRequest)
-            .where(BookingRequest.status == "cancelled", BookingRequest.cancelled_at >= datetime.utcnow() - timedelta(days=30))
+            .where(BookingRequest.status == "cancelled", BookingRequest.cancelled_at >= now - timedelta(days=30))
         ).scalar_one()
 
         no_shows_30 = db.execute(
             select(func.count()).select_from(BookingRequest)
-            .where(BookingRequest.no_show == True, BookingRequest.end_at >= datetime.utcnow() - timedelta(days=30))
+            .where(BookingRequest.no_show == True, BookingRequest.end_at >= now - timedelta(days=30))
         ).scalar_one()
 
         out_of_service = db.execute(
             select(func.count()).select_from(Machine).where(Machine.status == "out_of_service")
         ).scalar_one()
 
-        # Automation monitoring: SLA counts for both BookingRequest and AccessRequest
-        _now = datetime.utcnow()
-        _warn_threshold   = _now - timedelta(hours=8)
-        _breach_threshold = _now - timedelta(hours=48)
-
-        br_pending = db.execute(
-            select(func.count()).select_from(BookingRequest)
-            .where(BookingRequest.status == "pending")
-        ).scalar_one()
-
-        br_sla_warning = db.execute(
-            select(func.count()).select_from(BookingRequest)
-            .where(
-                BookingRequest.status == "pending",
-                BookingRequest.created_at <= _warn_threshold,
-                BookingRequest.created_at > _breach_threshold,
-            )
-        ).scalar_one()
-
-        br_sla_breach = db.execute(
-            select(func.count()).select_from(BookingRequest)
-            .where(
-                BookingRequest.status == "pending",
-                BookingRequest.created_at <= _breach_threshold,
-            )
-        ).scalar_one()
-
-        br_expired = db.execute(
-            select(func.count()).select_from(BookingRequest)
-            .where(BookingRequest.status == "expired")
-        ).scalar_one()
-
-        ar_pending = db.execute(
-            select(func.count()).select_from(AccessRequest)
-            .where(AccessRequest.status == "pending")
-        ).scalar_one()
-
-        ar_sla_warning = db.execute(
-            select(func.count()).select_from(AccessRequest)
-            .where(
-                AccessRequest.status == "pending",
-                AccessRequest.created_at <= _warn_threshold,
-                AccessRequest.created_at > _breach_threshold,
-            )
-        ).scalar_one()
-
-        ar_sla_breach = db.execute(
-            select(func.count()).select_from(AccessRequest)
-            .where(
-                AccessRequest.status == "pending",
-                AccessRequest.created_at <= _breach_threshold,
-            )
-        ).scalar_one()
-
-        ar_expired = db.execute(
-            select(func.count()).select_from(AccessRequest)
-            .where(AccessRequest.status == "expired")
-        ).scalar_one()
+        sla = _fetch_sla_stats(db, now)
 
         pending_bookings = db.execute(
             select(BookingRequest)
@@ -128,8 +158,8 @@ def dashboard():
             .limit(100)
         ).scalars().all()
 
-        # Access requests pending approval: only show those whose linked booking
-        # is approved (approval ordering enforcement – issue #46).
+        # Only show access requests whose linked booking is already approved,
+        # enforcing the required booking-first approval ordering.
         pending_access_requests = db.execute(
             select(AccessRequest)
             .join(BookingRequest, AccessRequest.booking_request_id == BookingRequest.id)
@@ -152,14 +182,7 @@ def dashboard():
         cancellations_30=cancellations_30,
         no_shows_30=no_shows_30,
         out_of_service=out_of_service,
-        br_pending=br_pending,
-        br_sla_warning=br_sla_warning,
-        br_sla_breach=br_sla_breach,
-        br_expired=br_expired,
-        ar_pending=ar_pending,
-        ar_sla_warning=ar_sla_warning,
-        ar_sla_breach=ar_sla_breach,
-        ar_expired=ar_expired,
+        **sla,
         pending_bookings=pending_bookings,
         pending_access_requests=pending_access_requests,
         status=status,
@@ -261,28 +284,7 @@ def reject_booking(booking_id: int):
         b.decided_at = datetime.utcnow()
         db.add(AuditLog(actor_email=current_user.email, action="booking_reject", detail=f"Rejected booking #{b.id}"))
         queue_notification(db, b.requester_id, f"Booking #{b.id} rejected: {b.decision_note}")
-
-        # Cascading rejection: auto-reject any linked pending AccessRequest.
-        ar = db.execute(
-            select(AccessRequest)
-            .where(AccessRequest.booking_request_id == b.id, AccessRequest.status == "pending")
-        ).scalar_one_or_none()
-        if ar:
-            ar.status = "rejected"
-            ar.resolved_by_id = current_user.id
-            ar.resolved_at = datetime.utcnow()
-            ar.updated_at = datetime.utcnow()
-            ar.decision_note = f"Auto-rejected: linked booking #{b.id} was rejected."
-            db.add(AuditLog(
-                actor_email=current_user.email,
-                action="access_request_auto_rejected_due_to_booking_rejection",
-                detail=f"access_request_id={ar.id}, booking_id={b.id}",
-            ))
-            queue_notification(
-                db, ar.requester_id,
-                f"Access request #{ar.id} auto-rejected because booking #{b.id} was rejected.",
-            )
-
+        _cascade_reject_access_request(db, b, current_user.email)
         db.commit()
     flash("Booking rejected.", "info")
     return redirect(url_for("admin.dashboard"))
@@ -451,7 +453,7 @@ def inventory():
     with current_app.session_factory() as db:
         stmt = (
             select(Machine)
-            .options(joinedload(Machine.site))   # ✅ eager load relationship
+            .options(joinedload(Machine.site))
             .order_by(Machine.name.asc())
         )
 
@@ -465,3 +467,4 @@ def inventory():
         machines = db.execute(stmt.limit(200)).scalars().all()
 
     return render_template("admin_inventory.html", machines=machines, q=q)
+
