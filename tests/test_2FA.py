@@ -237,12 +237,12 @@ def test_new_secret_replaces_old_secret(db):
 
 
 def test_verify_totp_with_extra_whitespace(db):
-    """Test token verification with extra whitespace."""
+    """Test token verification strips whitespace."""
     user = _create_user(db, with_2fa=True)
     token = user.get_totp().now()
     
-    # Token with spaces should not verify (assuming strict validation)
-    assert user.verify_totp(f" {token} ") is False
+    # Token with spaces should now verify (whitespace is stripped)
+    assert user.verify_totp(f" {token} ") is True
 
 
 def test_verify_totp_with_invalid_length(db):
@@ -270,3 +270,44 @@ def test_provisioning_uri_consistent_for_same_secret(db):
     uri2 = user.get_provisioning_uri()
     
     assert uri1 == uri2
+
+
+# ---------------------------------------------------------------------------
+# Tests: Security Features (Whitespace Stripping, Clock Drift)
+# ---------------------------------------------------------------------------
+
+
+def test_verify_totp_strips_leading_whitespace(db):
+    """Test that leading whitespace is stripped."""
+    user = _create_user(db, with_2fa=True)
+    token = user.get_totp().now()
+    
+    # Should verify with leading whitespace
+    assert user.verify_totp(f"  {token}") is True
+
+
+def test_verify_totp_strips_trailing_whitespace(db):
+    """Test that trailing whitespace is stripped."""
+    user = _create_user(db, with_2fa=True)
+    token = user.get_totp().now()
+    
+    # Should verify with trailing whitespace
+    assert user.verify_totp(f"{token}  ") is True
+
+
+def test_verify_totp_strips_mixed_whitespace(db):
+    """Test that mixed leading/trailing whitespace is stripped."""
+    user = _create_user(db, with_2fa=True)
+    token = user.get_totp().now()
+    
+    # Should verify with both leading and trailing whitespace
+    assert user.verify_totp(f"  {token}  ") is True
+
+
+def test_verify_totp_with_newlines(db):
+    """Test that newlines are stripped (common when pasting)."""
+    user = _create_user(db, with_2fa=True)
+    token = user.get_totp().now()
+    
+    # Should verify with embedded newline (common paste scenario)
+    assert user.verify_totp(f"\n{token}\n") is True

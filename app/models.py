@@ -228,11 +228,15 @@ class User(Base, UserMixin):
         return pyotp.TOTP(self.two_fa_secret)
 
     def verify_totp(self, token: str) -> bool:
-        """Verify a TOTP token."""
+        """Verify a TOTP token.
+        
+        Strips whitespace from token and allows small clock drift (±1 window).
+        """
         if not self.two_fa_secret:
             return False
         try:
-            return self.get_totp().verify(token)
+            token = token.strip()
+            return self.get_totp().verify(token, valid_window=1)
         except Exception:
             return False
 

@@ -23,7 +23,7 @@ class LoginForm(FlaskForm):
     submit = SubmitField("Sign in")
 
 class TOTPVerificationForm(FlaskForm):
-    token = StringField("Authentication code", validators=[DataRequired(), Length(min=6, max=6)])
+    token = StringField("Authentication code", validators=[DataRequired()])
     submit = SubmitField("Verify")
 
 class BookingForm(FlaskForm):

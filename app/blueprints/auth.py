@@ -8,6 +8,7 @@ from ..forms import RegisterForm, LoginForm, TOTPVerificationForm
 from ..models import User, AuditLog
 from ..security import hash_password, verify_password
 import pyotp
+import time
 import qrcode
 from io import BytesIO
 import base64
@@ -88,25 +89,59 @@ def logout():
 
 @bp.route("/verify-totp", methods=["GET", "POST"])
 def verify_totp():
-    """Verify TOTP token during login."""
+    """Verify TOTP token during login with brute-force protection."""
     if "pending_user_id" not in session:
         flash("Session expired. Please log in again.", "warning")
         return redirect(url_for("auth.login"))
 
+    # Brute-force protection: track failed attempts
+    MAX_ATTEMPTS = 5
+    failed_attempts = session.get("totp_failed_attempts", 0)
+    
+    if failed_attempts >= MAX_ATTEMPTS:
+        # Clear the pending session and force re-login
+        session.pop("pending_user_id", None)
+        session.pop("pending_user_email", None)
+        session.pop("totp_failed_attempts", None)
+        flash("Too many failed verification attempts. Please log in again.", "danger")
+        return redirect(url_for("auth.login"))
+
     form = TOTPVerificationForm()
     if form.validate_on_submit():
+        # Strip whitespace from token
+        token = form.token.data.strip()
+        
         with current_app.session_factory() as db:
             user = db.execute(select(User).where(User.id == session["pending_user_id"])).scalar_one_or_none()
-            if not user or not user.verify_totp(form.token.data):
+            if not user or not user.verify_totp(token):
+                # Increment failed attempts and add delay
+                failed_attempts += 1
+                session["totp_failed_attempts"] = failed_attempts
+                
+                # Small delay after failure (0.5 seconds) to slow brute-force
+                time.sleep(0.5)
+                
                 flash("Invalid authentication code.", "danger")
+                
+                # Check if we've hit max attempts after this failure
+                if failed_attempts >= MAX_ATTEMPTS:
+                    # Clear the pending session and force re-login
+                    session.pop("pending_user_id", None)
+                    session.pop("pending_user_email", None)
+                    session.pop("totp_failed_attempts", None)
+                    flash("Too many failed verification attempts. Please log in again.", "danger")
+                    return redirect(url_for("auth.login"))
+                
                 return render_template("verify_totp.html", form=form)
 
+            # Success: reset counter and log in
             login_user(user)
             db.add(AuditLog(actor_email=user.email, action="login", detail="User signed in with 2FA"))
             db.commit()
 
         session.pop("pending_user_id", None)
         session.pop("pending_user_email", None)
+        session.pop("totp_failed_attempts", None)  # Clear failed attempts on success
         return redirect(url_for("bookings.my_bookings"))
 
     return render_template("verify_totp.html", form=form)
@@ -122,30 +157,29 @@ def setup_2fa():
 
     form = TOTPVerificationForm()
     
-    with current_app.session_factory() as db:
-        user = db.execute(select(User).where(User.id == current_user.id)).scalar_one_or_none()
-        
-        # Generate new secret if not already in session
-        if "temp_2fa_secret" not in session:
-            user.generate_two_fa_secret()
-            session["temp_2fa_secret"] = user.two_fa_secret
-        else:
-            user.two_fa_secret = session["temp_2fa_secret"]
+    # Generate new secret if not already in session
+    if "temp_2fa_secret" not in session:
+        # Generate secret outside ORM to avoid accidental persistence
+        session["temp_2fa_secret"] = pyotp.random_base32()
+    
+    # Create a temporary TOTP object for QR generation (not stored on ORM)
+    temp_secret = session["temp_2fa_secret"]
+    temp_totp = pyotp.TOTP(temp_secret)
+    provisioning_uri = temp_totp.provisioning_uri(name=current_user.email, issuer_name="AP Assignment System")
+    
+    # Generate QR code
+    qr = qrcode.QRCode()
+    qr.add_data(provisioning_uri)
+    qr.make()
+    img = qr.make_image(fill_color="black", back_color="white")
+    
+    # Convert to base64 for embedding in HTML
+    img_io = BytesIO()
+    img.save(img_io, "PNG")
+    img_io.seek(0)
+    qr_code_b64 = base64.b64encode(img_io.getvalue()).decode()
 
-        # Generate QR code
-        provisioning_uri = user.get_provisioning_uri()
-        qr = qrcode.QRCode()
-        qr.add_data(provisioning_uri)
-        qr.make()
-        img = qr.make_image(fill_color="black", back_color="white")
-        
-        # Convert to base64 for embedding in HTML
-        img_io = BytesIO()
-        img.save(img_io, "PNG")
-        img_io.seek(0)
-        qr_code_b64 = base64.b64encode(img_io.getvalue()).decode()
-
-    return render_template("setup_2fa.html", secret=session["temp_2fa_secret"], qr_code=qr_code_b64, form=form)
+    return render_template("setup_2fa.html", secret=temp_secret, qr_code=qr_code_b64, form=form)
 
 
 @bp.route("/confirm-2fa", methods=["POST"])
@@ -162,9 +196,10 @@ def confirm_2fa():
         flash("2FA setup session expired.", "warning")
         return redirect(url_for("auth.setup_2fa"))
 
-    # Verify the token
+    # Verify the token - strip whitespace before verification
+    token = form.token.data.strip()
     totp = pyotp.TOTP(session["temp_2fa_secret"])
-    if not totp.verify(form.token.data):
+    if not totp.verify(token):
         flash("Invalid authentication code. Please try again.", "danger")
         return redirect(url_for("auth.setup_2fa"))
 
