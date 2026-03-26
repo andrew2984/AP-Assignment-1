@@ -27,4 +27,3 @@ jobs:
           PYTHONPATH: .
         run: |
           python -m pytest tests
-          pytest --cov --cov-branch --cov-report=xml
